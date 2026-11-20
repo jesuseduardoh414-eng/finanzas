@@ -103,6 +103,10 @@
           const key = `d:${x.id}:${y}-${pad(m)}`;
           add({ key, src: 'deboMes', id: x.id, concepto, monto: x.monto, tipo: 'gasto', hecho: !!st.hechos[key], arrastra: true, etiqueta: 'mensual' }, f);
         }
+      } else if (x.modo === 'tarjeta') {
+        for (const c of cuotasTarjeta(x, hasta)) {
+          add({ key: `d:${x.id}:${c.mes}`, src: 'tarjeta', id: x.id, mes: c.mes, concepto, monto: c.monto, tipo: 'gasto', hecho: c.pagado, arrastra: true, etiqueta: 'tarjeta' }, c.fecha);
+        }
       } else if (x.fecha) {
         add({ key: 'd:' + x.id, src: 'debo', id: x.id, concepto, monto: x.monto, tipo: 'gasto', hecho: x.estado === 'pagado', arrastra: true, etiqueta: 'debo' }, x.fecha);
       }
@@ -140,6 +144,40 @@
       }
     }
     return out;
+  }
+
+  // ---------- tarjetas de crédito ----------
+  // Pagos mensuales de una tarjeta desde que se registró hasta 'hasta'.
+  // Los ya pagados salen de x.pagos; los pendientes son el pago del mes, sin pasarse de lo que se debe
+  // (x.deuda ya tiene descontados los pagos hechos).
+  function cuotasTarjeta(x, hasta) {
+    const res = [];
+    if (!(x.monto > 0) || !x.dia) return res;
+    let resta = r2(x.deuda || 0);
+    for (const [y, m] of meses(x.inicio, hasta)) {
+      const f = fechaMes(y, m, x.dia);
+      if (f < x.inicio) continue;
+      const mes = `${y}-${pad(m)}`;
+      const p = x.pagos && x.pagos[mes];
+      if (p) { res.push({ mes, fecha: f, monto: p.monto, pagado: true }); continue; }
+      if (resta <= 0) continue;
+      const monto = r2(Math.min(x.monto, resta));
+      resta = r2(resta - monto);
+      res.push({ mes, fecha: f, monto, pagado: false });
+    }
+    return res;
+  }
+
+  // Pagos pendientes de una tarjeta: los atrasados + el próximo.
+  function pendientesTarjeta(x, hoy) {
+    hoy = hoy || hoyISO();
+    const res = [];
+    for (const c of cuotasTarjeta(x, addDays(hoy, 400))) {
+      if (c.pagado) continue;
+      res.push(c);
+      if (c.fecha >= hoy) break;
+    }
+    return res;
   }
 
   // ---------- semanas ----------
@@ -198,6 +236,7 @@
     let t = 0;
     for (const x of st.debo) {
       if (x.modo === 'mensual') t += pendientesMensual(st, x, hoy).length * x.monto;
+      else if (x.modo === 'tarjeta') t += Math.max(0, x.deuda || 0); // en tarjetas cuenta todo lo que debes
       else if (x.estado !== 'pagado') t += x.monto;
     }
     return r2(t);
@@ -205,6 +244,7 @@
 
   root.Calc = {
     SEMANAS, pad, toISO, fromISO, hoyISO, addDays, diffDays, lunesDe, fechaMes, meses, r2,
-    vacio, normalizar, saldoTotal, ocurrencias, calcularSemanas, pendientesMensual, totalMeDeben, totalDebo,
+    vacio, normalizar, saldoTotal, ocurrencias, calcularSemanas, pendientesMensual, cuotasTarjeta, pendientesTarjeta,
+    totalMeDeben, totalDebo,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -393,6 +393,7 @@
     const prox = (x) => {
       if (x.estado === 'pagado') return '~';
       if (x.modo === 'mensual') { const p = C.pendientesMensual(st, x)[0]; return p ? p.fecha : '~'; }
+      if (x.modo === 'tarjeta') { const p = C.pendientesTarjeta(x)[0]; return p ? p.fecha : '~'; }
       return x.fecha || '9999';
     };
     const items = [...st.debo].sort((a, b) => prox(a).localeCompare(prox(b)));
@@ -416,6 +417,19 @@
       boton = pag || !pend[0]
         ? '<span class="estado ok">Terminada</span>'
         : `<button class="estado" data-act="pago-mes" data-id="${x.id}">Pagar ${nombreMes(pend[0].fecha)}</button>`;
+    } else if (x.modo === 'tarjeta') {
+      const pend = C.pendientesTarjeta(x);
+      const atr = pend.filter((p) => p.fecha < C.hoyISO()).length;
+      const deuda = Math.max(0, x.deuda || 0);
+      const lineas = [
+        'Tarjeta' + (x.limite ? ` · límite ${money(x.limite)} · disponible <b class="${negc(x.limite - deuda)}">${money(x.limite - deuda)}</b>` : ''),
+        `Pago ${money(x.monto)} antes del día ${x.dia}` + (pend[0] ? ` · próximo ${fCorta(pend[0].fecha)}` : ''),
+      ];
+      sub = lineas.join('<br>') + (atr ? ` <span class="tag warn">${atr} atrasado${atr > 1 ? 's' : ''}</span>` : '');
+      monto = `${money(deuda)}<small> debes</small>`;
+      boton = deuda <= 0 || !pend[0]
+        ? '<span class="estado ok">Liquidada</span>'
+        : `<button class="estado" data-act="pago-tarjeta" data-id="${x.id}">Pagar ${nombreMes(pend[0].fecha)}</button>`;
     } else {
       const vencido = !pag && x.fecha && x.fecha < C.hoyISO();
       sub = `Pago único · ${x.fecha ? 'límite ' + fCorta(x.fecha) : 'sin fecha'}` + (vencido ? ' <span class="tag warn">vencido</span>' : '');
@@ -497,8 +511,46 @@
   }
   const preguntaCuenta = (tipo) => (tipo === 'ingreso' ? '¿A qué cuenta entró?' : '¿De qué cuenta salió?');
 
+  // Pago de tarjeta: pregunta cuánto pagaste y de qué cuenta; baja lo que debes.
+  function formPagoTarjeta(x, cuota) {
+    abrir(`
+      <h2>Pagar ${esc(x.aQuien)} · ${nombreMes(cuota.fecha)}</h2>
+      <form class="form">
+        <p class="hint">Debes ${money(Math.max(0, x.deuda || 0))} · pago del mes ${money(cuota.monto)}</p>
+        <label>¿Cuánto pagaste?<input name="monto" inputmode="decimal" value="${cuota.monto}" required></label>
+        ${selCuenta('cuenta', '¿De qué cuenta salió?', null)}
+        ${botonesForm(false)}
+      </form>`, (w) => {
+      montarForm(w, (d) => {
+        const monto = C.r2(num(d.monto));
+        if (!(monto > 0)) return 'Escribe un monto válido';
+        const cta = d.cuenta || null;
+        x.pagos = x.pagos || {};
+        x.pagos[cuota.mes] = { monto, cuenta: cta };
+        x.deuda = C.r2((x.deuda || 0) - monto);
+        aplicar([[cta, -monto]], `Pago de ${nombreMes(cuota.fecha)} hecho`);
+      });
+      const i = $('input[name=monto]', w);
+      i.focus();
+      i.select();
+    });
+  }
+
+  function deshacerPagoTarjeta(x, mes) {
+    const p = x.pagos && x.pagos[mes];
+    if (!p) return;
+    delete x.pagos[mes];
+    x.deuda = C.r2((x.deuda || 0) + p.monto);
+    aplicar([[p.cuenta, p.monto]], 'Pago desmarcado');
+  }
+
   function toggleHecho(o) {
     if (!o) return;
+    if (o.src === 'tarjeta') {
+      const x = find(st.debo, o.id);
+      if (!x) return;
+      return o.hecho ? deshacerPagoTarjeta(x, o.mes) : formPagoTarjeta(x, o);
+    }
     const signo = o.tipo === 'ingreso' ? 1 : -1;
     const m = o.src === 'mov' ? find(st.movs, o.id) : null;
     const x = o.src === 'meDeben' ? find(st.meDeben, o.id) : o.src === 'debo' ? find(st.debo, o.id) : null;
@@ -775,38 +827,51 @@
 
   function formDebo(x) {
     const ed = !!x;
-    const v = x || { aQuien: '', concepto: '', monto: '', modo: 'unico', fecha: '', dia: '', estado: 'pendiente', cuentaPago: null };
+    const v = x || { aQuien: '', concepto: '', monto: '', modo: 'unico', fecha: '', dia: '', estado: 'pendiente', cuentaPago: null, deuda: '', limite: '' };
     abrir(`
       <h2>${ed ? 'Editar deuda' : 'Nueva deuda'}</h2>
       <form class="form">
-        <label>¿A quién?<input name="aQuien" value="${esc(v.aQuien)}" autocomplete="off" required></label>
+        <label>¿A quién?<input name="aQuien" value="${esc(v.aQuien)}" placeholder="Ej. Mercado Pago, C&amp;A" autocomplete="off" required></label>
         <label>Concepto <small>(opcional)</small><input name="concepto" value="${esc(v.concepto)}" autocomplete="off"></label>
-        <label>Monto<input name="monto" inputmode="decimal" value="${v.monto}" placeholder="0" required></label>
-        ${seg('modo', [['unico', 'Pago único'], ['mensual', 'Mensual']], v.modo)}
+        ${seg('modo', [['unico', 'Pago único'], ['mensual', 'Mensual'], ['tarjeta', 'Tarjeta']], v.modo)}
+        <label data-show="modo=unico|mensual">Monto<input name="monto" inputmode="decimal" value="${v.monto}" placeholder="0" required></label>
+        <label data-show="modo=tarjeta">¿Cuánto debes en total?<input name="deuda" inputmode="decimal" value="${v.deuda ?? ''}" placeholder="Ej. 868.14" required></label>
+        <label data-show="modo=tarjeta">Pago del mes<input name="monto" inputmode="decimal" value="${v.monto}" placeholder="Ej. 289.38" required></label>
+        <label data-show="modo=tarjeta">Límite de crédito <small>(opcional)</small><input name="limite" inputmode="decimal" value="${v.limite || ''}" placeholder="Ej. 1500"></label>
         <label data-show="modo=unico">Fecha límite <small>(opcional)</small><input name="fecha" type="date" value="${v.fecha || ''}"></label>
-        <label data-show="modo=mensual">Día límite del mes<input name="dia" type="number" min="1" max="31" inputmode="numeric" value="${v.dia || ''}" placeholder="Ej. 8"></label>
-        <div class="lbl-f">Estado</div>
-        ${seg('estado', [['pendiente', 'Pendiente'], ['pagado', 'Pagado']], v.estado)}
+        <label data-show="modo=mensual|tarjeta">Día límite de pago<input name="dia" type="number" min="1" max="31" inputmode="numeric" value="${v.dia || ''}" placeholder="Ej. 13"></label>
+        <div class="form-grupo" data-show="modo=unico|mensual">
+          <div class="lbl-f">Estado</div>
+          ${seg('estado', [['pendiente', 'Pendiente'], ['pagado', 'Pagado']], v.estado)}
+        </div>
         ${selCuenta('cuentaPago', '¿De qué cuenta salió?', v.cuentaPago, 'modo=unico&estado=pagado')}
         <p class="hint" data-show="modo=mensual">Cada mes se genera el pago en Semanas. Márcalo como <b>Pagado</b> solo cuando termines de pagar la deuda completa.</p>
+        <p class="hint" data-show="modo=tarjeta">Cada mes se genera el pago en Semanas hasta terminar de pagar. Al pagarlo, baja lo que debes. Si haces compras o cambia tu pago del mes, actualízalo aquí.</p>
         ${botonesForm(ed)}
       </form>`, (w) => {
       montarForm(w, (d) => {
         const monto = num(d.monto);
+        const tarjeta = d.modo === 'tarjeta';
         if (!d.aQuien.trim()) return 'Escribe a quién le debes';
-        if (!(monto > 0)) return 'Escribe un monto válido';
+        if (tarjeta && !(num(d.deuda) >= 0)) return 'Escribe cuánto debes en total';
+        if (!(monto > 0)) return tarjeta ? 'Escribe el pago del mes' : 'Escribe un monto válido';
         const dia = parseInt(d.dia, 10);
-        if (d.modo === 'mensual' && !(dia >= 1 && dia <= 31)) return 'Día del mes entre 1 y 31';
+        if (d.modo !== 'unico' && !(dia >= 1 && dia <= 31)) return 'Día de pago entre 1 y 31';
+        const limite = num(d.limite);
+        if (tarjeta && String(d.limite || '').trim() && !(limite > 0)) return 'Límite de crédito inválido';
         const nuevo = {
           id: ed ? x.id : uid(), aQuien: d.aQuien.trim(), concepto: d.concepto.trim(), monto: C.r2(monto),
-          modo: d.modo, fecha: d.modo === 'unico' ? d.fecha || null : null, dia: d.modo === 'mensual' ? dia : null,
-          inicio: (ed && x.inicio) || C.hoyISO(), estado: d.estado,
+          modo: d.modo, fecha: d.modo === 'unico' ? d.fecha || null : null, dia: d.modo === 'unico' ? null : dia,
+          inicio: (ed && x.inicio) || C.hoyISO(), estado: tarjeta ? 'pendiente' : d.estado,
           cuentaPago: d.modo === 'unico' && d.estado === 'pagado' ? d.cuentaPago || (ed ? x.cuentaPago : null) || null : null,
+          deuda: tarjeta ? C.r2(num(d.deuda)) : undefined,
+          limite: tarjeta && limite > 0 ? C.r2(limite) : undefined,
+          pagos: tarjeta ? (ed && x.pagos) || {} : undefined,
         };
         const antes = ed ? efDebo(x) : [];
         if (ed) Object.assign(x, nuevo); else st.debo.push(nuevo);
         aplicar([...negar(antes), ...efDebo(nuevo)], ed ? 'Deuda actualizada' : 'Deuda agregada');
-      }, () => borrar('debo', x, x.modo === 'unico' && x.estado === 'pagado'));
+      }, () => borrar('debo', x, (x.modo === 'unico' && x.estado === 'pagado') || Object.keys(x.pagos || {}).length > 0));
     });
   }
 
@@ -857,7 +922,7 @@
     });
   }
 
-  const ORIGEN = { mov: 'Movimiento único', meDeben: 'De “Me deben”', debo: 'De “Debo” (pago único)', deboMes: 'De “Debo” (mensual)', rec: 'Movimiento recurrente' };
+  const ORIGEN = { mov: 'Movimiento único', meDeben: 'De “Me deben”', debo: 'De “Debo” (pago único)', deboMes: 'De “Debo” (mensual)', tarjeta: 'De “Debo” (tarjeta)', rec: 'Movimiento recurrente' };
 
   function detalleOc(o) {
     if (!o) return;
@@ -880,7 +945,7 @@
         if (s === 'editar') {
           if (o.src === 'mov') return formMov(find(st.movs, o.id));
           if (o.src === 'meDeben') return formMeDeben(find(st.meDeben, o.id));
-          if (o.src === 'debo' || o.src === 'deboMes') return formDebo(find(st.debo, o.id));
+          if (o.src === 'debo' || o.src === 'deboMes' || o.src === 'tarjeta') return formDebo(find(st.debo, o.id));
           if (o.src === 'rec') return formRec(find(st.recs, o.id));
         }
       });
@@ -933,6 +998,11 @@
       case 'editar-debo': return formDebo(find(st.debo, id));
       case 'pago-debo': return togglePagado('debo', id);
       case 'pago-mes': return pagarMes(id);
+      case 'pago-tarjeta': {
+        const x = find(st.debo, id);
+        const p = x && C.pendientesTarjeta(x)[0];
+        return p && formPagoTarjeta(x, p);
+      }
       case 'nuevo-rec': return formRec();
       case 'editar-rec': return formRec(find(st.recs, id));
     }
