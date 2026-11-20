@@ -35,20 +35,25 @@
 
   // ---------- estado ----------
   const vacio = () => ({
-    v: 1,
-    saldo: 0,
-    movs: [],     // {id, fecha, concepto, monto, tipo:'ingreso'|'gasto', hecho}
-    meDeben: [],  // {id, persona, concepto, monto, fecha|null, estado:'pendiente'|'pagado'}
-    debo: [],     // {id, aQuien, concepto, monto, modo:'unico'|'mensual', fecha|null, dia|null, inicio, estado}
+    v: 2,
+    cuentas: [{ id: 'efectivo', nombre: 'Efectivo', tipo: 'efectivo', saldo: 0 }], // {id, nombre, tipo:'efectivo'|'tarjeta'|'otra', saldo}
+    principal: 'efectivo', // cuenta sugerida al marcar algo como hecho
+    movs: [],     // {id, fecha, concepto, monto, tipo:'ingreso'|'gasto', hecho, cuenta}
+    meDeben: [],  // {id, persona, concepto, monto, fechaPrestamo, fecha|null (pago esperado), estado, cuentaPago, cuentaSalida}
+    debo: [],     // {id, aQuien, concepto, monto, modo:'unico'|'mensual', fecha|null, dia|null, inicio, estado, cuentaPago}
     recs: [],     // {id, clase:'semanal'|'cadaDias'|'mensual', concepto, tipo, monto, montoB|null, cadaDias|null, inicio}
-    hechos: {},   // clave de ocurrencia generada -> true
+    hechos: {},   // clave de ocurrencia generada -> id de la cuenta donde se aplicó
     mover: {},    // clave de ocurrencia (mensual estimado) -> 'YYYY-MM-DD'
   });
+
+  const saldoTotal = (st) => r2(st.cuentas.reduce((a, c) => a + (Number(c.saldo) || 0), 0));
 
   function normalizar(d) {
     const s = vacio();
     if (!d || typeof d !== 'object') return s;
-    if (typeof d.saldo === 'number' && isFinite(d.saldo)) s.saldo = d.saldo;
+    if (Array.isArray(d.cuentas) && d.cuentas.length) s.cuentas = d.cuentas;
+    else if (typeof d.saldo === 'number' && isFinite(d.saldo)) s.cuentas[0].saldo = d.saldo; // versión 1: un solo saldo
+    s.principal = s.cuentas.some((c) => c.id === d.principal) ? d.principal : s.cuentas[0].id;
     for (const k of ['movs', 'meDeben', 'debo', 'recs']) if (Array.isArray(d[k])) s[k] = d[k];
     for (const k of ['hechos', 'mover']) if (d[k] && typeof d[k] === 'object' && !Array.isArray(d[k])) s[k] = d[k];
     const hoy = hoyISO();
@@ -149,7 +154,7 @@
       String(a.concepto).localeCompare(String(b.concepto)));
 
     // El saldo actual ya incluye todo lo marcado como hecho; solo se proyecta lo pendiente.
-    let saldo = r2(st.saldo);
+    let saldo = saldoTotal(st);
     const semanas = [];
     for (let i = 0; i < SEMANAS; i++) {
       const ini = addDays(desde, i * 7);
@@ -200,6 +205,6 @@
 
   root.Calc = {
     SEMANAS, pad, toISO, fromISO, hoyISO, addDays, diffDays, lunesDe, fechaMes, meses, r2,
-    vacio, normalizar, ocurrencias, calcularSemanas, pendientesMensual, totalMeDeben, totalDebo,
+    vacio, normalizar, saldoTotal, ocurrencias, calcularSemanas, pendientesMensual, totalMeDeben, totalDebo,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

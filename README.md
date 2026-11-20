@@ -20,7 +20,8 @@ Abre el enlace y en **Inicio** aparece la tarjeta **Acceso directo**:
 
 ## Cómo funciona
 
-- **Saldo actual**: lo editas a mano. Al marcar algo como **Hecho** (o **Pagado**) se suma o resta solo; al desmarcarlo se revierte.
+- **Saldo actual**: es la suma de tus cuentas (efectivo, tarjetas, otras), cada una editable a mano. Al marcar algo como **Hecho** o **Pagado** se suma o resta en la cuenta que elijas (si solo tienes una, se usa directo). Al desmarcarlo se revierte en esa misma cuenta.
+- **Me deben**: una tarjeta por persona con sus préstamos en orden (Préstamo 1, 2, 3…), cuándo te los pidió, cuánto te debe en total y el botón *Otro préstamo a…*. Si al prestar salió dinero de una cuenta, puedes indicarlo y se descuenta.
 - **Semanas**: de la actual a 10 semanas adelante. Parten del saldo actual y proyectan solo lo pendiente. Lo hecho se ve tachado y no se vuelve a contar. Si el saldo baja de cero en algún momento, la semana se marca en rojo.
 - **Atrasados**: lo pendiente de semanas pasadas (me deben, debo, pagos mensuales y movimientos únicos) aparece en la semana actual con la etiqueta *atrasado*. Los recurrentes pasados no se arrastran.
 - **Debo mensual**: genera un pago cada mes en el día límite (a partir del día en que la registras). El total que debo cuenta los pagos atrasados más el próximo. Marca la deuda como *Pagado* solo cuando la termines por completo.

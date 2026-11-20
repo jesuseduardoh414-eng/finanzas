@@ -206,16 +206,33 @@
 
   const vacioMsg = (t) => `<p class="vacio">${t}</p>`;
 
+  const ICONOS = {
+    efectivo: '<svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>',
+    tarjeta: '<svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/></svg>',
+    otra: '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M3 9V7a2 2 0 0 1 2-2h11v2"/><circle cx="16.5" cy="13" r="1.2"/></svg>',
+  };
+  const icono = (c) => `<span class="ico">${ICONOS[c.tipo] || ICONOS.otra}</span>`;
+
   function vInicio() {
     const sem = C.calcularSemanas(st);
+    const saldo = C.saldoTotal(st);
     const md = C.totalMeDeben(st);
     const db = C.totalDebo(st);
-    const neto = C.r2(st.saldo + md - db);
+    const neto = C.r2(saldo + md - db);
+    const varias = st.cuentas.length > 1;
     return `
-      <section class="card saldo" data-act="editar-saldo">
+      <section class="card saldo">
         <div class="lbl">Saldo actual</div>
-        <div class="big ${negc(st.saldo)}">${money(st.saldo)}</div>
-        <div class="hint">Toca para editar</div>
+        <div class="big ${negc(saldo)}">${money(saldo)}</div>
+        <ul class="cuentas">
+          ${st.cuentas.map((c) => `
+            <li data-act="editar-cuenta" data-id="${esc(c.id)}">
+              ${icono(c)}
+              <span class="nom">${esc(c.nombre)}${varias && c.id === st.principal ? ' <span class="tag">principal</span>' : ''}</span>
+              <b class="${negc(c.saldo)}">${money(c.saldo)}</b>
+            </li>`).join('')}
+        </ul>
+        <button class="link" data-act="nueva-cuenta">+ Agregar tarjeta, efectivo u otra cuenta</button>
       </section>
       <div class="grid2">
         <section class="card mini" data-act="ir" data-tab="medeben">
@@ -269,7 +286,8 @@
   }
 
   function vInstalar() {
-    if (instalada()) return '';
+    const movil = /android|iphone|ipad|ipod/i.test(navigator.userAgent) || esIOS();
+    if (instalada() || (!avisoInstalar && !movil)) return '';
     if (avisoInstalar) {
       return `
         <section class="card fila">
@@ -333,25 +351,35 @@
       if (x.estado !== 'pagado') g.pend = C.r2(g.pend + x.monto);
     }
     const lista = [...grupos.values()].sort((a, b) => b.pend - a.pend || a.nombre.localeCompare(b.nombre));
-    const orden = (a, b) => (a.estado === 'pagado') - (b.estado === 'pagado') || String(a.fecha || '9999').localeCompare(String(b.fecha || '9999'));
+    // Préstamos en el orden en que te los pidió (el id lleva la hora de creación).
+    const orden = (a, b) => String(a.fechaPrestamo || '').localeCompare(String(b.fechaPrestamo || '')) || String(a.id).localeCompare(String(b.id));
     return `
-      <section class="card fila"><div class="lbl">Total pendiente</div><div class="val ing">${money(total)}</div></section>
-      <button class="btn pri block" data-act="nuevo-medeben">+ Agregar</button>
+      <section class="card fila"><div class="lbl">Total que me deben</div><div class="val ing">${money(total)}</div></section>
+      <button class="btn pri block" data-act="nuevo-medeben">+ Agregar persona</button>
       ${lista.length ? lista.map((g) => `
         <section class="card">
-          <header class="fila grupo-h"><b>${esc(g.nombre)}</b><span class="${g.pend ? 'ing' : 'muted'}">${g.pend ? money(g.pend) : 'Todo pagado'}</span></header>
-          <ul class="items">${g.items.sort(orden).map(itemMeDeben).join('')}</ul>
+          <header class="fila grupo-h">
+            <div><b>${esc(g.nombre)}</b><div class="hint">${g.items.length === 1 ? '1 préstamo'
+              : `${g.items.length} préstamos · ${money(g.items.reduce((a, x) => a + x.monto, 0))} en total`}</div></div>
+            <div class="der">${g.pend ? `<div class="hint">Me debe</div><b class="ing">${money(g.pend)}</b>` : '<span class="muted">Todo pagado</span>'}</div>
+          </header>
+          <ul class="items">${g.items.sort(orden).map((x, i) => itemMeDeben(x, i + 1)).join('')}</ul>
+          <button class="link" data-act="nuevo-prestamo" data-persona="${esc(g.nombre)}">+ Otro préstamo a ${esc(g.nombre)}</button>
         </section>`).join('') : vacioMsg('Nadie te debe nada por ahora.')}`;
   }
 
-  function itemMeDeben(x) {
+  function itemMeDeben(x, n) {
     const pag = x.estado === 'pagado';
     const vencido = !pag && x.fecha && x.fecha < C.hoyISO();
+    const fechas = [
+      x.fechaPrestamo ? 'te pidió ' + fCorta(x.fechaPrestamo) : '',
+      x.fecha ? 'paga ' + fCorta(x.fecha) : '',
+    ].filter(Boolean).join(' · ');
     return `
       <li class="item ${pag ? 'pagado' : ''}" data-act="editar-medeben" data-id="${x.id}">
         <div class="item-main">
-          ${x.concepto ? `<div class="l1">${esc(x.concepto)}</div>` : ''}
-          <div class="${x.concepto ? 'l2' : 'l1'}">${x.fecha ? fCorta(x.fecha) : 'Sin fecha'} ${vencido ? '<span class="tag warn">vencido</span>' : ''}</div>
+          <div class="l1">Préstamo ${n}${x.concepto ? ` · ${esc(x.concepto)}` : ''}</div>
+          <div class="l2">${fechas || 'sin fechas'} ${vencido ? '<span class="tag warn">vencido</span>' : ''}</div>
         </div>
         <div class="item-r">
           <b>${money(x.monto)}</b>
@@ -423,41 +451,89 @@
   }
 
   // ---------- acciones ----------
-  function aplicar(delta, msg) {
-    if (delta) st.saldo = C.r2(st.saldo + delta);
+  // Cuenta por id; si no existe (o es null) usa la principal.
+  const cuentaDe = (id) => find(st.cuentas, id) || find(st.cuentas, st.principal) || st.cuentas[0];
+
+  // cambios: [[idCuenta, delta], ...] — se suman a cada cuenta y se avisa qué cambió.
+  function aplicar(cambios, msg) {
+    const porCuenta = new Map();
+    for (const [id, delta] of cambios || []) {
+      if (!delta) continue;
+      const c = cuentaDe(id);
+      porCuenta.set(c, C.r2((porCuenta.get(c) || 0) + delta));
+    }
+    const partes = [];
+    for (const [c, delta] of porCuenta) {
+      if (!delta) continue;
+      c.saldo = C.r2(c.saldo + delta);
+      partes.push(`${c.nombre} ${delta > 0 ? '+' : '−'}${money(Math.abs(delta))}`);
+    }
     guardar();
     cerrar();
     render();
-    toast(delta ? `${msg} · saldo ${delta > 0 ? '+' : '−'}${money(Math.abs(delta))} → ${money(st.saldo)}` : msg);
+    toast(partes.length ? `${msg} · ${partes.join(', ')}` : msg);
   }
+
+  const negar = (cambios) => cambios.map(([c, d]) => [c, -d]);
+
+  // Con una sola cuenta la usa directo; con varias pregunta en cuál.
+  function elegirCuenta(titulo, sugerida, alElegir) {
+    if (st.cuentas.length < 2) return alElegir(st.cuentas[0].id);
+    const def = cuentaDe(sugerida).id;
+    abrir(`
+      <h2>${titulo}</h2>
+      <div class="acciones">
+        ${st.cuentas.map((c) => `
+          <button class="btn cuenta-btn ${c.id === def ? 'sel' : ''}" data-cuenta="${esc(c.id)}">
+            ${icono(c)}<span class="nom">${esc(c.nombre)}</span><span class="muted">${money(c.saldo)}</span>
+          </button>`).join('')}
+        <button class="btn ghost" data-close>Cancelar</button>
+      </div>`, (w) => {
+      w.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-cuenta]');
+        if (b) alElegir(b.dataset.cuenta);
+      });
+    });
+  }
+  const preguntaCuenta = (tipo) => (tipo === 'ingreso' ? '¿A qué cuenta entró?' : '¿De qué cuenta salió?');
 
   function toggleHecho(o) {
     if (!o) return;
-    const nuevo = !o.hecho;
-    if (o.src === 'mov') {
-      const m = find(st.movs, o.id);
-      if (!m) return;
-      m.hecho = nuevo;
-    } else if (o.src === 'meDeben' || o.src === 'debo') {
-      const x = find(o.src === 'meDeben' ? st.meDeben : st.debo, o.id);
-      if (!x) return;
-      x.estado = nuevo ? 'pagado' : 'pendiente';
-    } else if (nuevo) {
-      st.hechos[o.key] = true;
-    } else {
-      delete st.hechos[o.key];
+    const signo = o.tipo === 'ingreso' ? 1 : -1;
+    const m = o.src === 'mov' ? find(st.movs, o.id) : null;
+    const x = o.src === 'meDeben' ? find(st.meDeben, o.id) : o.src === 'debo' ? find(st.debo, o.id) : null;
+    if ((o.src === 'mov' && !m) || ((o.src === 'meDeben' || o.src === 'debo') && !x)) return;
+
+    if (o.hecho) { // desmarcar: se revierte en la cuenta donde se aplicó
+      let cta;
+      if (m) { cta = m.cuenta; m.hecho = false; }
+      else if (x) { cta = x.cuentaPago; x.estado = 'pendiente'; x.cuentaPago = null; }
+      else { cta = typeof st.hechos[o.key] === 'string' ? st.hechos[o.key] : null; delete st.hechos[o.key]; }
+      return aplicar([[cta, -signo * o.monto]], 'Desmarcado');
     }
-    const delta = (o.tipo === 'ingreso' ? 1 : -1) * o.monto * (nuevo ? 1 : -1);
-    aplicar(delta, nuevo ? 'Hecho' : 'Desmarcado');
+    elegirCuenta(preguntaCuenta(o.tipo), m ? m.cuenta : null, (cta) => {
+      if (m) { m.hecho = true; m.cuenta = cta; }
+      else if (x) { x.estado = 'pagado'; x.cuentaPago = cta; }
+      else st.hechos[o.key] = cta;
+      aplicar([[cta, signo * o.monto]], 'Hecho');
+    });
   }
 
   function togglePagado(cual, id) {
     const x = find(st[cual], id);
     if (!x) return;
-    const nuevo = x.estado !== 'pagado';
-    x.estado = nuevo ? 'pagado' : 'pendiente';
     const signo = cual === 'meDeben' ? 1 : -1;
-    aplicar(signo * x.monto * (nuevo ? 1 : -1), nuevo ? 'Pagado' : 'Pendiente');
+    if (x.estado === 'pagado') {
+      const cta = x.cuentaPago;
+      x.estado = 'pendiente';
+      x.cuentaPago = null;
+      return aplicar([[cta, -signo * x.monto]], 'Pendiente');
+    }
+    elegirCuenta(preguntaCuenta(signo > 0 ? 'ingreso' : 'gasto'), null, (cta) => {
+      x.estado = 'pagado';
+      x.cuentaPago = cta;
+      aplicar([[cta, signo * x.monto]], 'Pagado');
+    });
   }
 
   function pagarMes(id) {
@@ -465,19 +541,21 @@
     if (!x) return;
     const p = C.pendientesMensual(st, x)[0];
     if (!p) return;
-    st.hechos[p.key] = true;
-    aplicar(-x.monto, `Pago de ${nombreMes(p.fecha)} hecho`);
+    elegirCuenta(preguntaCuenta('gasto'), null, (cta) => {
+      st.hechos[p.key] = cta;
+      aplicar([[cta, -x.monto]], `Pago de ${nombreMes(p.fecha)} hecho`);
+    });
   }
 
   function borrar(cual, item, yaAplicado) {
     const nombre = item.concepto || item.persona || item.aQuien || '';
-    const extra = yaAplicado ? '\n\nYa está marcado como hecho/pagado: tu saldo actual no cambia.' : '';
+    const extra = yaAplicado ? '\n\nYa está marcado como hecho/pagado: el saldo de tus cuentas no cambia.' : '';
     if (!confirm(`¿Eliminar "${nombre}"?${extra}`)) return;
     st[cual] = st[cual].filter((x) => x !== item);
     // limpiar marcas de ocurrencias generadas
     const pref = (cual === 'debo' ? 'd:' : 'r:') + item.id + ':';
     for (const mapa of [st.hechos, st.mover]) for (const k of Object.keys(mapa)) if (k.startsWith(pref)) delete mapa[k];
-    aplicar(0, 'Eliminado');
+    aplicar([], 'Eliminado');
   }
 
   function exportar() {
@@ -501,7 +579,7 @@
     if (!valido) return alert('Ese archivo no parece un respaldo de esta app.');
     if (!confirm('¿Reemplazar TODOS tus datos actuales con este respaldo?')) return;
     st = C.normalizar(d);
-    aplicar(0, 'Respaldo importado');
+    aplicar([], 'Respaldo importado');
   });
 
   // ---------- hoja inferior (formularios) ----------
@@ -527,13 +605,20 @@
     if (e.target.closest('[data-close]')) cerrar();
   });
 
-  // Muestra/oculta campos según otro campo: data-show="modo=mensual" o "clase=semanal|cadaDias"
+  // Muestra/oculta campos según otros: data-show="modo=mensual", "clase=semanal|cadaDias",
+  // "modo=unico&estado=pagado" o, para casillas, "hecho=si".
   function visibilidad(w) {
     const f = $('form', w);
     if (!f) return;
+    const valor = (k) => {
+      const el = f.elements[k];
+      return el && el.type === 'checkbox' ? (el.checked ? 'si' : 'no') : el ? el.value : '';
+    };
     w.querySelectorAll('[data-show]').forEach((el) => {
-      const [k, v] = el.dataset.show.split('=');
-      const on = v.split('|').includes(f.elements[k].value);
+      const on = el.dataset.show.split('&').every((cond) => {
+        const [k, v] = cond.split('=');
+        return v.split('|').includes(valor(k));
+      });
       el.hidden = !on;
       el.querySelectorAll('input,select').forEach((i) => { i.disabled = !on; });
     });
@@ -563,30 +648,51 @@
     if (b && alBorrar) b.addEventListener('click', alBorrar);
   }
 
-  function formSaldo() {
+  // Selector de cuenta (solo si hay más de una). show: condición data-show opcional.
+  const selCuenta = (name, label, val, show) => (st.cuentas.length < 2 ? '' : `
+    <label ${show ? `data-show="${show}"` : ''}>${label}
+      <select name="${name}">${st.cuentas.map((c) =>
+        `<option value="${esc(c.id)}" ${c.id === cuentaDe(val).id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
+      </select>
+    </label>`);
+
+  function formCuenta(c) {
+    const ed = !!c;
+    const v = c || { nombre: '', tipo: 'tarjeta', saldo: '' };
+    const conPrincipal = !ed || st.cuentas.length > 1;
     abrir(`
-      <h2>Saldo actual</h2>
+      <h2>${ed ? 'Editar cuenta' : 'Nueva cuenta'}</h2>
       <form class="form">
-        <label>¿Cuánto tienes ahora?<input name="saldo" type="number" step="any" value="${st.saldo}" required></label>
-        ${botonesForm(false)}
+        ${seg('tipo', [['efectivo', 'Efectivo'], ['tarjeta', 'Tarjeta'], ['otra', 'Otra']], v.tipo)}
+        <label>Nombre<input name="nombre" value="${esc(v.nombre)}" placeholder="Ej. BBVA, Nu, Mercado Pago" autocomplete="off" required></label>
+        <label>¿Cuánto tienes ahí?<input name="saldo" type="number" step="any" value="${v.saldo}" placeholder="0" required></label>
+        ${conPrincipal ? `<label class="check-l"><input type="checkbox" name="principal" ${ed && st.principal === c.id ? 'checked' : ''}> Cuenta principal <small>(sale seleccionada al registrar pagos)</small></label>` : ''}
+        ${botonesForm(ed && st.cuentas.length > 1)}
       </form>`, (w) => {
       montarForm(w, (d) => {
         const n = num(d.saldo);
-        if (!isFinite(n)) return 'Escribe un número';
-        st.saldo = C.r2(n);
-        aplicar(0, 'Saldo actualizado');
+        if (!d.nombre.trim()) return 'Escribe un nombre';
+        if (!isFinite(n)) return 'Escribe cuánto tienes';
+        const nueva = { id: ed ? c.id : uid(), nombre: d.nombre.trim(), tipo: d.tipo, saldo: C.r2(n) };
+        if (ed) Object.assign(c, nueva); else st.cuentas.push(nueva);
+        if (d.principal) st.principal = nueva.id;
+        aplicar([], ed ? 'Cuenta actualizada' : 'Cuenta agregada');
+      }, () => {
+        if (!confirm(`¿Eliminar "${c.nombre}"? Su saldo (${money(c.saldo)}) dejará de contarse.`)) return;
+        st.cuentas = st.cuentas.filter((x) => x !== c);
+        if (st.principal === c.id) st.principal = st.cuentas[0].id;
+        aplicar([], 'Cuenta eliminada');
       });
-      const i = $('input', w);
-      i.focus();
-      i.select();
+      if (ed) { const i = $('input[name=saldo]', w); i.focus(); i.select(); }
+      else $('input[name=nombre]', w).focus();
     });
   }
 
-  const efectoMov = (x) => (x.hecho ? (x.tipo === 'ingreso' ? 1 : -1) * x.monto : 0);
+  const efMov = (m) => (m.hecho ? [[m.cuenta, (m.tipo === 'ingreso' ? 1 : -1) * m.monto]] : []);
 
   function formMov(m) {
     const ed = !!m;
-    const v = m || { tipo: 'gasto', concepto: '', monto: '', fecha: C.hoyISO(), hecho: false };
+    const v = m || { tipo: 'gasto', concepto: '', monto: '', fecha: C.hoyISO(), hecho: false, cuenta: null };
     abrir(`
       <h2>${ed ? 'Editar movimiento' : 'Nuevo movimiento'}</h2>
       <form class="form">
@@ -594,7 +700,8 @@
         <label>Concepto<input name="concepto" value="${esc(v.concepto)}" autocomplete="off" required></label>
         <label>Monto<input name="monto" inputmode="decimal" value="${v.monto}" placeholder="0" required></label>
         <label>Fecha<input name="fecha" type="date" value="${v.fecha}" required></label>
-        <label class="check-l"><input type="checkbox" name="hecho" ${v.hecho ? 'checked' : ''}> Ya está hecho (ajusta el saldo actual)</label>
+        <label class="check-l"><input type="checkbox" name="hecho" ${v.hecho ? 'checked' : ''}> Ya está hecho (ajusta tu saldo)</label>
+        ${selCuenta('cuenta', 'Cuenta', v.cuenta, 'hecho=si')}
         ${botonesForm(ed)}
       </form>`, (w) => {
       montarForm(w, (d) => {
@@ -602,50 +709,73 @@
         if (!d.concepto.trim()) return 'Escribe un concepto';
         if (!(monto > 0)) return 'Escribe un monto válido';
         if (!d.fecha) return 'Elige una fecha';
-        const nuevo = { id: ed ? m.id : uid(), fecha: d.fecha, concepto: d.concepto.trim(), monto: C.r2(monto), tipo: d.tipo, hecho: !!d.hecho };
-        const delta = efectoMov(nuevo) - (ed ? efectoMov(m) : 0);
+        const nuevo = {
+          id: ed ? m.id : uid(), fecha: d.fecha, concepto: d.concepto.trim(), monto: C.r2(monto), tipo: d.tipo,
+          hecho: !!d.hecho, cuenta: d.cuenta || (ed ? m.cuenta : null) || null,
+        };
+        const antes = ed ? efMov(m) : [];
         if (ed) Object.assign(m, nuevo); else st.movs.push(nuevo);
-        aplicar(delta, ed ? 'Movimiento actualizado' : 'Movimiento agregado');
+        aplicar([...negar(antes), ...efMov(nuevo)], ed ? 'Movimiento actualizado' : 'Movimiento agregado');
       }, () => borrar('movs', m, m.hecho));
       if (!ed) $('input[name=concepto]', w).focus();
     });
   }
 
-  const efectoMeDeben = (x) => (x.estado === 'pagado' ? x.monto : 0);
+  // Un préstamo afecta tus cuentas si salió dinero al prestarlo y cuando te lo pagan.
+  const efMeDeben = (x) => [
+    ...(x.estado === 'pagado' ? [[x.cuentaPago, x.monto]] : []),
+    ...(x.cuentaSalida ? [[x.cuentaSalida, -x.monto]] : []),
+  ];
 
-  function formMeDeben(x) {
+  function formMeDeben(x, persona) {
     const ed = !!x;
-    const v = x || { persona: '', concepto: '', monto: '', fecha: '', estado: 'pendiente' };
+    const v = x || { persona: persona || '', concepto: '', monto: '', fechaPrestamo: C.hoyISO(), fecha: '', estado: 'pendiente', cuentaPago: null, cuentaSalida: null };
     const nombres = [...new Set(st.meDeben.map((p) => p.persona.trim()))];
+    const titulo = ed ? `Préstamo de ${esc(x.persona)}` : persona ? `Otro préstamo a ${esc(persona)}` : 'Nueva persona';
     abrir(`
-      <h2>${ed ? 'Editar' : 'Alguien me debe'}</h2>
+      <h2>${titulo}</h2>
       <form class="form">
         <label>Persona<input name="persona" list="personas" value="${esc(v.persona)}" autocomplete="off" required></label>
         <datalist id="personas">${nombres.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+        <label>¿Cuánto te pidió?<input name="monto" inputmode="decimal" value="${v.monto}" placeholder="0" required></label>
+        <label>¿Cuándo te lo pidió?<input name="fechaPrestamo" type="date" value="${v.fechaPrestamo || ''}"></label>
         <label>Concepto <small>(opcional)</small><input name="concepto" value="${esc(v.concepto)}" autocomplete="off"></label>
-        <label>Monto<input name="monto" inputmode="decimal" value="${v.monto}" placeholder="0" required></label>
-        <label>Fecha esperada <small>(opcional: si la pones, aparece en Semanas)</small><input name="fecha" type="date" value="${v.fecha || ''}"></label>
+        <label>¿Cuándo te va a pagar? <small>(opcional: si la pones, aparece en Semanas)</small><input name="fecha" type="date" value="${v.fecha || ''}"></label>
+        <label>¿Salió dinero de tus cuentas?
+          <select name="cuentaSalida">
+            <option value="">No, solo registrarlo</option>
+            ${st.cuentas.map((c) => `<option value="${esc(c.id)}" ${c.id === v.cuentaSalida ? 'selected' : ''}>Sí, de ${esc(c.nombre)}</option>`).join('')}
+          </select>
+        </label>
         <div class="lbl-f">Estado</div>
         ${seg('estado', [['pendiente', 'Pendiente'], ['pagado', 'Pagado']], v.estado)}
+        ${selCuenta('cuentaPago', '¿A qué cuenta te pagó?', v.cuentaPago, 'estado=pagado')}
         ${botonesForm(ed)}
       </form>`, (w) => {
       montarForm(w, (d) => {
         const monto = num(d.monto);
         if (!d.persona.trim()) return 'Escribe el nombre';
         if (!(monto > 0)) return 'Escribe un monto válido';
-        const nuevo = { id: ed ? x.id : uid(), persona: d.persona.trim(), concepto: d.concepto.trim(), monto: C.r2(monto), fecha: d.fecha || null, estado: d.estado };
-        const delta = efectoMeDeben(nuevo) - (ed ? efectoMeDeben(x) : 0);
+        const pagado = d.estado === 'pagado';
+        const nuevo = {
+          id: ed ? x.id : uid(), persona: d.persona.trim(), concepto: d.concepto.trim(), monto: C.r2(monto),
+          fechaPrestamo: d.fechaPrestamo || null, fecha: d.fecha || null, estado: d.estado,
+          cuentaPago: pagado ? d.cuentaPago || (ed ? x.cuentaPago : null) || null : null,
+          cuentaSalida: d.cuentaSalida || null,
+        };
+        const antes = ed ? efMeDeben(x) : [];
         if (ed) Object.assign(x, nuevo); else st.meDeben.push(nuevo);
-        aplicar(delta, ed ? 'Actualizado' : 'Agregado');
-      }, () => borrar('meDeben', x, x.estado === 'pagado'));
+        aplicar([...negar(antes), ...efMeDeben(nuevo)], ed ? 'Préstamo actualizado' : 'Préstamo agregado');
+      }, () => borrar('meDeben', x, x.estado === 'pagado' || !!x.cuentaSalida));
+      $(persona || ed ? 'input[name=monto]' : 'input[name=persona]', w).focus();
     });
   }
 
-  const efectoDebo = (x) => (x.modo === 'unico' && x.estado === 'pagado' ? -x.monto : 0);
+  const efDebo = (x) => (x.modo === 'unico' && x.estado === 'pagado' ? [[x.cuentaPago, -x.monto]] : []);
 
   function formDebo(x) {
     const ed = !!x;
-    const v = x || { aQuien: '', concepto: '', monto: '', modo: 'unico', fecha: '', dia: '', estado: 'pendiente' };
+    const v = x || { aQuien: '', concepto: '', monto: '', modo: 'unico', fecha: '', dia: '', estado: 'pendiente', cuentaPago: null };
     abrir(`
       <h2>${ed ? 'Editar deuda' : 'Nueva deuda'}</h2>
       <form class="form">
@@ -657,6 +787,7 @@
         <label data-show="modo=mensual">Día límite del mes<input name="dia" type="number" min="1" max="31" inputmode="numeric" value="${v.dia || ''}" placeholder="Ej. 8"></label>
         <div class="lbl-f">Estado</div>
         ${seg('estado', [['pendiente', 'Pendiente'], ['pagado', 'Pagado']], v.estado)}
+        ${selCuenta('cuentaPago', '¿De qué cuenta salió?', v.cuentaPago, 'modo=unico&estado=pagado')}
         <p class="hint" data-show="modo=mensual">Cada mes se genera el pago en Semanas. Márcalo como <b>Pagado</b> solo cuando termines de pagar la deuda completa.</p>
         ${botonesForm(ed)}
       </form>`, (w) => {
@@ -670,10 +801,11 @@
           id: ed ? x.id : uid(), aQuien: d.aQuien.trim(), concepto: d.concepto.trim(), monto: C.r2(monto),
           modo: d.modo, fecha: d.modo === 'unico' ? d.fecha || null : null, dia: d.modo === 'mensual' ? dia : null,
           inicio: (ed && x.inicio) || C.hoyISO(), estado: d.estado,
+          cuentaPago: d.modo === 'unico' && d.estado === 'pagado' ? d.cuentaPago || (ed ? x.cuentaPago : null) || null : null,
         };
-        const delta = efectoDebo(nuevo) - (ed ? efectoDebo(x) : 0);
+        const antes = ed ? efDebo(x) : [];
         if (ed) Object.assign(x, nuevo); else st.debo.push(nuevo);
-        aplicar(delta, ed ? 'Deuda actualizada' : 'Deuda agregada');
+        aplicar([...negar(antes), ...efDebo(nuevo)], ed ? 'Deuda actualizada' : 'Deuda agregada');
       }, () => borrar('debo', x, x.modo === 'unico' && x.estado === 'pagado'));
     });
   }
@@ -720,7 +852,7 @@
           nuevo.cadaDias = n;
         }
         if (ed) Object.assign(r, nuevo); else st.recs.push(nuevo);
-        aplicar(0, ed ? 'Recurrente actualizado' : 'Recurrente agregado');
+        aplicar([], ed ? 'Recurrente actualizado' : 'Recurrente agregado');
       }, () => borrar('recs', r, false));
     });
   }
@@ -771,10 +903,10 @@
         if (!d.fecha) return 'Elige una fecha';
         if (d.fecha === o.fechaDefault) delete st.mover[o.key];
         else st.mover[o.key] = d.fecha;
-        aplicar(0, 'Fecha movida');
+        aplicar([], 'Fecha movida');
       });
       const r = $('[data-reset]', w);
-      if (r) r.addEventListener('click', () => { delete st.mover[o.key]; aplicar(0, 'Regresado a fin de mes'); });
+      if (r) r.addEventListener('click', () => { delete st.mover[o.key]; aplicar([], 'Regresado a fin de mes'); });
     });
   }
 
@@ -785,7 +917,9 @@
     const id = el.dataset.id;
     switch (el.dataset.act) {
       case 'reintentar': return location.reload();
-      case 'editar-saldo': return formSaldo();
+      case 'nueva-cuenta': return formCuenta();
+      case 'editar-cuenta': return formCuenta(find(st.cuentas, id));
+      case 'nuevo-prestamo': return formMeDeben(null, el.dataset.persona);
       case 'ir': tab = el.dataset.tab; render(); return window.scrollTo(0, 0);
       case 'instalar': return instalar();
       case 'exportar': return exportar();
