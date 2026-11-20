@@ -2,7 +2,7 @@
   'use strict';
   const C = window.Calc;
   const CFG = window.FIN_CONFIG || {};
-  const LS = { clave: 'fin_clave', cache: 'fin_cache', pend: 'fin_pendiente' };
+  const LS = { cache: 'fin_cache', pend: 'fin_pendiente' };
 
   // ---------- utilidades ----------
   const $ = (s, el = document) => el.querySelector(s);
@@ -87,7 +87,7 @@
     } catch (e) {
       sucio = true;
       guardando = false;
-      if (e.invalida) return salir('Tu clave ya no es válida. Escríbela de nuevo.');
+      if (e.invalida) return sinAcceso();
       setSync('offline');
       return;
     }
@@ -114,7 +114,7 @@
       setSync('ok');
       if (cambio) render();
     } catch (e) {
-      if (e.invalida) return salir('Tu clave ya no es válida. Escríbela de nuevo.');
+      if (e.invalida) return sinAcceso();
       setSync('offline');
     }
   }
@@ -134,16 +134,16 @@
   // ---------- arranque ----------
   function configurado() {
     const u = CFG.supabaseUrl || '', k = CFG.supabaseAnonKey || '';
-    return u && k && !/TU-PROYECTO|TU-ANON/.test(u + k);
+    return u && k && CFG.clave && !/TU-PROYECTO|TU-ANON/.test(u + k);
   }
 
   async function iniciar() {
     registrarSW();
     if (!configurado()) {
-      return pantalla('Falta configurar Supabase', 'Edita <b>config.js</b> con la URL y la anon key de tu proyecto de Supabase.');
+      return pantalla('Falta configurar Supabase', 'Edita <b>config.js</b> con la URL, la anon key y la clave de tus datos.');
     }
-    clave = localStorage.getItem(LS.clave);
-    if (!clave) return pantallaClave();
+    clave = CFG.clave;
+    localStorage.removeItem('fin_clave'); // de la versión que pedía clave
 
     const cache = localStorage.getItem(LS.cache);
     if (cache) {
@@ -159,7 +159,7 @@
       mostrarApp();
       setSync('ok');
     } catch (e) {
-      if (e.invalida) return salir();
+      if (e.invalida) return sinAcceso();
       pantalla('Sin conexión', 'No se pudieron cargar tus datos. Revisa tu internet.', true);
     }
   }
@@ -174,45 +174,10 @@
       ${reintentar ? '<button class="btn pri block" data-act="reintentar">Reintentar</button>' : ''}</section>`;
   }
 
-  function pantallaClave(msg) {
-    pantalla('Clave de acceso', 'Escribe la clave que pusiste en Supabase. Solo se pide una vez en este dispositivo.');
-    $('.setup').insertAdjacentHTML('beforeend', `
-      <form class="form" id="f-clave">
-        <input name="clave" type="password" autocomplete="current-password" placeholder="Tu clave" required>
-        <p class="error">${esc(msg || '')}</p>
-        <button class="btn pri block" type="submit">Entrar</button>
-      </form>`);
-    const f = $('#f-clave');
-    f.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const c = f.clave.value.trim();
-      if (!c) return;
-      const btn = $('button', f);
-      btn.disabled = true;
-      $('.error', f).textContent = '';
-      try {
-        const d = await rpc('fin_cargar', { p_clave: c });
-        clave = c;
-        st = C.normalizar(d);
-        localStorage.setItem(LS.clave, c);
-        localStorage.setItem(LS.cache, JSON.stringify(st));
-        localStorage.removeItem(LS.pend);
-        mostrarApp();
-        setSync('ok');
-      } catch (err) {
-        $('.error', f).textContent = err.invalida ? 'Clave incorrecta.' : 'No se pudo conectar: ' + err.message;
-        btn.disabled = false;
-      }
-    });
-  }
-
-  function salir(msg) {
-    [LS.clave, LS.cache, LS.pend].forEach((k) => localStorage.removeItem(k));
-    clave = null;
-    sucio = false;
-    st = C.vacio();
+  // La clave de config.js no existe en Supabase. Los cambios locales se conservan en el teléfono.
+  function sinAcceso() {
     cerrar();
-    pantallaClave(msg);
+    pantalla('No se encontraron tus datos', 'Supabase no reconoce la clave de <b>config.js</b>. Revisa que coincida con la de la tabla <b>finanzas</b>.', true);
   }
 
   function mostrarApp() {
@@ -269,6 +234,7 @@
         <div class="fila linea"><span>Fin de esta semana <small>${fCorta(sem[0].fin)}</small></span><b class="${negc(sem[0].final)}">${money(sem[0].final)}</b></div>
         <div class="fila linea"><span>Fin de la siguiente <small>${fCorta(sem[1].fin)}</small></span><b class="${negc(sem[1].final)}">${money(sem[1].final)}</b></div>
       </section>
+      ${vInstalar()}
       <section class="card">
         <div class="lbl">Respaldo</div>
         <div class="botones">
@@ -276,6 +242,45 @@
           <button class="btn" data-act="importar">Importar JSON</button>
         </div>
       </section>`;
+  }
+
+  // ---------- acceso directo (instalar en la pantalla de inicio) ----------
+  let avisoInstalar = null; // evento beforeinstallprompt (Android / Chrome)
+  const instalada = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const esIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    avisoInstalar = e;
+    if (tab === 'inicio') render();
+  });
+  window.addEventListener('appinstalled', () => {
+    avisoInstalar = null;
+    render();
+    toast('App instalada en tu pantalla de inicio');
+  });
+
+  async function instalar() {
+    if (!avisoInstalar) return;
+    avisoInstalar.prompt();
+    await avisoInstalar.userChoice.catch(() => {});
+    avisoInstalar = null;
+    render();
+  }
+
+  function vInstalar() {
+    if (instalada()) return '';
+    if (avisoInstalar) {
+      return `
+        <section class="card fila">
+          <div><div class="lbl">Acceso directo</div><div class="hint">Ponla en la pantalla de inicio de tu celular</div></div>
+          <button class="btn pri" data-act="instalar">Instalar</button>
+        </section>`;
+    }
+    const pasos = esIOS()
+      ? 'En Safari toca <b>Compartir</b> (el cuadro con la flecha) y luego <b>Agregar a inicio</b>.'
+      : 'En el menú <b>⋮</b> del navegador elige <b>Instalar app</b> o <b>Agregar a pantalla principal</b>.';
+    return `<section class="card"><div class="lbl">Acceso directo</div><p class="hint">${pasos}</p></section>`;
   }
 
   function vSemanas() {
@@ -782,6 +787,7 @@
       case 'reintentar': return location.reload();
       case 'editar-saldo': return formSaldo();
       case 'ir': tab = el.dataset.tab; render(); return window.scrollTo(0, 0);
+      case 'instalar': return instalar();
       case 'exportar': return exportar();
       case 'importar': return $('#archivo').click();
       case 'hecho': return toggleHecho(ocMap.get(el.dataset.key));

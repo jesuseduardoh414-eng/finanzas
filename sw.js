@@ -1,6 +1,6 @@
 // Service worker: permite instalar la app y abrirla sin conexión.
 // Estrategia: primero red (para tener siempre la última versión), si falla usa la copia guardada.
-const CACHE = 'finanzas-v1';
+const CACHE = 'finanzas-v2';
 const ARCHIVOS = [
   './', './index.html', './styles.css', './config.js', './calc.js', './app.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',

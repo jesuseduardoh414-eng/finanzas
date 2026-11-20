@@ -1,7 +1,8 @@
 -- Finanzas: ejecutar una sola vez en Supabase → SQL Editor.
 -- Guarda todos tus datos como un solo documento JSON.
 -- La tabla NO es accesible directo con la anon key; solo a través de dos
--- funciones que exigen tu clave secreta.
+-- funciones que reciben la clave de la fila (la misma que está en config.js).
+-- Esa clave es pública: cualquiera con el enlace de la app puede ver y editar los datos.
 
 create table if not exists public.finanzas (
   clave       text primary key,
@@ -55,8 +56,8 @@ revoke all on function public.fin_guardar(text, jsonb) from public, anon, authen
 grant execute on function public.fin_cargar(text) to anon;
 grant execute on function public.fin_guardar(text, jsonb) to anon;
 
--- ⚠️ CAMBIA esta clave por una tuya, larga y difícil de adivinar (20+ caracteres).
--- Es la que escribirás la primera vez que abras la app en cada dispositivo.
+-- Fila de datos. Debe coincidir con "clave" en config.js.
+-- Nunca uses aquí una contraseña real: esta clave queda pública en la app.
 insert into public.finanzas (clave)
-values ('CAMBIA-ESTA-CLAVE-POR-UNA-LARGA-Y-SECRETA')
+values ('principal')
 on conflict (clave) do nothing;
