@@ -61,3 +61,26 @@ grant execute on function public.fin_guardar(text, jsonb) to anon;
 insert into public.finanzas (clave)
 values ('principal')
 on conflict (clave) do nothing;
+
+-- Tiempo real: cada vez que se guardan los datos, avisa por Supabase Realtime (Broadcast)
+-- en el canal público "finanzas". El aviso no lleva datos; la app los vuelve a cargar.
+create or replace function public.fin_avisar_cambio()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  begin
+    perform realtime.send(jsonb_build_object('actualizado', new.actualizado), 'cambio', 'finanzas', false);
+  exception when others then
+    null; -- si el aviso falla, el guardado no se afecta
+  end;
+  return null;
+end;
+$$;
+revoke all on function public.fin_avisar_cambio() from public, anon, authenticated;
+drop trigger if exists fin_avisar_cambio on public.finanzas;
+create trigger fin_avisar_cambio
+after update on public.finanzas
+for each row execute function public.fin_avisar_cambio();

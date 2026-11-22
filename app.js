@@ -64,6 +64,8 @@
   }
 
   let timer = null, guardando = false, sucio = false;
+  let bajando = false, remotoPendiente = false, ultimoGuardado = null;
+  const hojaAbierta = () => !$('#sheet').hidden;
 
   // Guarda en el teléfono al instante y sube a Supabase poco después.
   function guardar() {
@@ -82,7 +84,7 @@
     setSync('guardando');
     let ok = false;
     try {
-      await rpc('fin_guardar', { p_clave: clave, p_datos: st });
+      ultimoGuardado = await rpc('fin_guardar', { p_clave: clave, p_datos: st });
       ok = true;
     } catch (e) {
       sucio = true;
@@ -98,15 +100,20 @@
   }
 
   // Trae lo último de Supabase (o sube lo pendiente si hay cambios sin guardar).
+  // Con un formulario abierto espera a que se cierre, para no perder lo que estás capturando.
   async function sincronizar() {
+    if (!clave) return;
     if (localStorage.getItem(LS.pend)) {
       sucio = true;
       return subir();
     }
-    if (guardando || sucio) return;
+    if (guardando || sucio || bajando) return;
+    if (hojaAbierta()) { remotoPendiente = true; return; }
+    bajando = true;
     try {
       const d = await rpc('fin_cargar', { p_clave: clave });
       if (guardando || sucio || localStorage.getItem(LS.pend)) return;
+      if (hojaAbierta()) { remotoPendiente = true; return; }
       const nuevo = C.normalizar(d);
       const cambio = JSON.stringify(nuevo) !== JSON.stringify(st);
       st = nuevo;
@@ -116,7 +123,53 @@
     } catch (e) {
       if (e.invalida) return sinAcceso();
       setSync('offline');
+    } finally {
+      bajando = false;
     }
+  }
+
+  // ---------- tiempo real ----------
+  // La base de datos avisa (Supabase Realtime) cada vez que se guardan los datos desde cualquier dispositivo.
+  let canal = null;
+  function tiempoReal() {
+    if (canal || !window.supabase || !window.supabase.createClient) return;
+    try {
+      const cli = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      canal = cli.channel('finanzas')
+        .on('broadcast', { event: 'cambio' }, (m) => {
+          const at = m && m.payload && m.payload.actualizado;
+          if (at && at === ultimoGuardado) return; // lo guardó este mismo dispositivo
+          sincronizar();
+        })
+        .subscribe((estado) => {
+          if (estado === 'SUBSCRIBED') sincronizar(); // al (re)conectar, por si algo cambió mientras tanto
+        });
+    } catch (_) {
+      canal = null; // sin tiempo real: queda la revisión periódica
+    }
+  }
+
+  // ---------- actualización automática de la app ----------
+  // Si se publicó una versión nueva (cambia la huella ETag de algún archivo), la app se recarga sola.
+  const ARCHIVOS_APP = ['./', 'app.js', 'calc.js', 'styles.css', 'config.js'];
+  let firmaApp = null;
+  async function revisarVersion() {
+    if (!/^https?:$/.test(location.protocol)) return;
+    try {
+      const etags = await Promise.all(ARCHIVOS_APP.map((f) =>
+        fetch(f, { method: 'HEAD', cache: 'no-store' }).then((r) => (r.ok && r.headers.get('etag')) || '')));
+      if (etags.some((e) => !e)) return;
+      const firma = etags.join('|');
+      if (firmaApp === null) { firmaApp = firma; return; }
+      if (firma === firmaApp || hojaAbierta() || sucio || guardando) return;
+      const ultima = Number(sessionStorage.getItem('fin_recarga') || 0);
+      if (Date.now() - ultima < 5 * 60 * 1000) return; // nunca más de una recarga cada 5 minutos
+      sessionStorage.setItem('fin_recarga', String(Date.now()));
+      sessionStorage.setItem('fin_actualizada', '1');
+      location.reload();
+    } catch (_) { /* sin conexión */ }
   }
 
   function setSync(estado) {
@@ -185,6 +238,12 @@
     $('#tabs').hidden = false;
     $('#fab').hidden = false;
     render();
+    tiempoReal();
+    revisarVersion(); // toma la huella de la versión actual
+    if (sessionStorage.getItem('fin_actualizada')) {
+      sessionStorage.removeItem('fin_actualizada');
+      toast('App actualizada a la última versión');
+    }
   }
 
   function registrarSW() {
@@ -651,6 +710,11 @@
     $('#sheet').hidden = true;
     document.body.classList.remove('modal');
     $('#sheet .sheet-panel').innerHTML = '';
+    // Llegó un cambio de otro dispositivo mientras el formulario estaba abierto: aplicarlo ahora.
+    if (remotoPendiente) {
+      remotoPendiente = false;
+      setTimeout(sincronizar, 0);
+    }
   }
 
   $('#sheet').addEventListener('click', (e) => {
@@ -1018,13 +1082,24 @@
 
   $('#fab').addEventListener('click', () => formMov());
 
+  // Al volver a la app (desde otra app, otra pestaña o la pantalla de inicio del celular).
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && enApp && clave) {
-      render(); // por si cambió el día
+      if (!hojaAbierta()) render(); // por si cambió el día
       sincronizar();
+      revisarVersion();
     }
   });
-  window.addEventListener('online', () => { if (enApp && clave) sincronizar(); });
+  window.addEventListener('pageshow', (e) => { if (e.persisted && enApp && clave) { sincronizar(); revisarVersion(); } });
+  window.addEventListener('focus', () => { if (enApp && clave) sincronizar(); });
+  window.addEventListener('online', () => { if (enApp && clave) { sincronizar(); revisarVersion(); } });
+  // Respaldo por si el tiempo real se cae: revisa cada 30 s mientras la app está a la vista.
+  setInterval(() => {
+    if (document.visibilityState === 'visible' && enApp && clave) {
+      sincronizar();
+      revisarVersion();
+    }
+  }, 30000);
 
   let toastT;
   function toast(msg) {

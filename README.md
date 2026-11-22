@@ -30,5 +30,7 @@ Abre el enlace y en **Inicio** aparece la tarjeta **Acceso directo**:
   - *Cada semana*: con monto opcional de semanas alternas (A/B), en el día de la semana de la primera fecha.
   - *Cada X días*.
   - *Mensual sin día fijo*: estimado el último día del mes. Desde Semanas → tocar → *Mover fecha*.
+- **Tiempo real**: lo que cambias en un dispositivo aparece en los demás al instante (Supabase Realtime). Si un formulario está abierto, el cambio se aplica al cerrarlo. Además revisa cada 30 s y al volver a la app.
+- **Actualización automática**: si se publica una versión nueva, la app (también la instalada en el celular) se recarga sola y avisa.
 - **Sin conexión**: los cambios se guardan en el teléfono y se suben solos al volver la conexión.
 - **Respaldo**: Inicio → Exportar / Importar JSON.
